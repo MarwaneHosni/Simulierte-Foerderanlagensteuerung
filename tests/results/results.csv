@@ -1,0 +1,31 @@
+ID;Gruppe;Titel;Ausgangszustand;Aktion;Erwartet;Ergebnis;Status;Zyklen
+T01;Grundfunktionen;Startzustand READY;Spannungsversorgung, keine Befehle;5 Zyklen Initialisierung;Zustand READY, keine Störung;Zustand READY, Störung -;PASS;7
+T02;Grundfunktionen;Automatikstart durch Werkstueck;Automatikbetrieb, keine Störung;Automatik + Werkstueckerzeugung aktiv;Band startet automatisch (Schützbefehl EIN);Schützbefehl EIN nach 202 Zyklen = True;PASS;202
+T03;Grundfunktionen;Stop hat Vorrang vor Start;Motor laeuft (Hand);Start und Stop gleichzeitig;Motor aus (Stop dominiert);Schützbefehl = 0;PASS;24
+T04;Grundfunktionen;Reset ohne Stoerung startet nicht;Anlage READY, keine Stoerung;Reset-Taster betaetigen;Kein Motorstart, keine Zaehleraenderung;Schützbefehl = 0, Zaehler = 0;PASS;11
+T05;Grundfunktionen;Automatikbetrieb: Transport und Zaehlung;Automatikbetrieb;Werkstueck durchlaufen lassen;Werkstueck wird gezaehlt (Zaehler >= 1);Zaehler = 1 nach 405 Zyklen;PASS;405
+T06;Grundfunktionen;Handbetrieb;Handbetrieb, keine Stoerung;Start-Taster betaetigen;Motor laeuft (RUNNING, Befehl und Rueckmeldung EIN);Zustand RUNNING, Befehl 1, Rueckmeldung 1;PASS;20
+T07;Grundfunktionen;Handbetrieb durch Not-Halt gesperrt;Not-Halt aktiv;Start-Taster im Handbetrieb betaetigen;Kein Motorstart, Zustand EMERGENCY;Schützbefehl = 0, Zustand EMERGENCY;PASS;13
+T08;Grundfunktionen;Betriebsartwechsel stoppt das Band;Motor laeuft im Handbetrieb;Wechsel auf Automatik;Band wird gestoppt (kein automatischer Weiterlauf ohne Werkstueck);Schützbefehl = 0;PASS;25
+T09;Motor;Erfolgreicher Motorstart mit Rueckmeldung;Stillstand, keine Stoerung;Start-Taster (Hand);Rueckmeldung EIN, Zustand RUNNING;Rueckmeldung 1, Zustand RUNNING;PASS;20
+T10;Motor;Motor laeuft nicht an (Start-Timeout);Rueckmeldung faellt aus (simulierter Defekt);Start-Taster;Stoerung START-TIMEOUT;Stoerung START-TIMEOUT nach 103 Zyklen;PASS;103
+T11;Motor;Erfolgreicher Motorstop;Motor laeuft;Stop-Taster;Schützbefehl und Rueckmeldung AUS;Befehl 0, Rueckmeldung 0;PASS;26
+T12;Motor;Motor stoppt nicht (Stop-Timeout);Rueckmeldung haengt EIN (simulierter Defekt);Stop-Taster;Stoerung STOP-TIMEOUT;Stoerung STOP-TIMEOUT nach 121 Zyklen;PASS;121
+T13;Motor;Motorueberlast;Motor laeuft;Ueberlast wird ausgeloest;Motor AUS, Stoerung UEBERLAST;Stoerung UEBERLAST, Schützbefehl 0;PASS;172
+T14;Motor;Ueberlast blockiert Wiederanlauf;Ueberlast gespeichert, nicht quittiert;Start-Taster erneut;Kein Wiederanlauf (Stoerung verriegelt);Schützbefehl = 0;PASS;181
+T15;Sensorik;Einlaufsensor erkennt Werkstueck;Automatikbetrieb;Werkstueck am Einlauf;Einlaufsensor B1 aktiv;B1 = 1, Zyklus 201;PASS;201
+T16;Sensorik;Auslaufsensor erkennt Werkstueck;Automatikbetrieb;Werkstueck am Auslauf;Auslaufsensor B2 aktiv;B2 = 1, Zyklus 404;PASS;404
+T17;Sensorik;Zaehler zaehlt nur einmal je Werkstueck;Ein Werkstueck auf dem Band;Durchlauf bis Auslauf;Zaehler genau 1 (keine Mehrfachzaehlung);Zaehler = 1;PASS;705
+T18;Sensorik;Sensor-Inkonsistenz (Dauersignal);Anlage steht, kein Transport;Auslaufsensor liefert Dauersignal;Stoerung SENSOR-INKONSISTENZ;Stoerung SENSOR-INKONSISTENZ nach 29 Zyklen;PASS;29
+T19;Sensorik;Kein Fehlalarm bei normalem Transport;Automatikbetrieb;Normales Werkstueck transportieren;Keine Sensor-Inkonsistenz, Zaehler inkrementiert;Fehlalarm = False, Zaehler = 1;PASS;405
+T20;Foerderband;Transportzeit im erwarteten Bereich;Werkstueck am Einlauf;Transport bis Auslauf;Transportzeit ca. 188 Zyklen (theoretisch);204 Zyklen (4.08 s);PASS;405
+T21;Foerderband;Stauererkennung;Automatikbetrieb;Blockade in Bandmitte;Stoerung STAU;Stoerung STAU nach 602 Zyklen;PASS;602
+T22;Foerderband;Erholung nach Stau;Stau quittiert, Blockade entfernt;Reset und Weiterbetrieb;Stoerung geloescht, Band laeuft wieder;Stoerung -, Schützbefehl 1;PASS;606
+T23;Foerderband;Keine Stau-Stoerung vor Transportzeit;Werkstueck laeuft an, Blockade;300 Zyklen beobachten;Noch keine Stau-Stoerung (Timeout 8 s = 400 Zyklen);vorzeitige Stoerung = False;PASS;501
+T24;Sicherheit;Not-Halt im Stillstand;Anlage steht (READY);Not-Halt-Taster betaetigen;Zustand EMERGENCY, Motor aus;Zustand EMERGENCY, Schützbefehl 0;PASS;5
+T25;Sicherheit;Not-Halt waehrend des Laufs;Motor laeuft;Not-Halt-Taster betaetigen;Zustand EMERGENCY, Motor sofort aus;Zustand EMERGENCY, Befehl 0, Rueckmeldung 0;PASS;23
+T26;Sicherheit;Kein Wiederanlauf ohne Quittung nach Not-Halt;Not-Halt war aktiv, Taster wieder freigegeben;Zuerst ohne Quittung beobachten, dann Reset;Vor Reset Stoerung gespeichert, nach Reset geloescht;vor Reset Stoerung=True, danach -;PASS;49
+T27;Sicherheit;Schuetz faellt bei Not-Halt ab;Motor laeuft (Schütz angezogen);Not-Halt betaetigen;Schütz faellt ab (xSimContactor = 0), Motor aus;Schütz 0, Befehl 0;PASS;21
+T28;Wiederanlauf;Stoerung beseitigen und quittieren;Start-Timeout gespeichert;Defekt behoben und Reset;Stoerung geloescht, Anlage wieder bereit;Stoerung -, Zustand READY;PASS;112
+T29;Wiederanlauf;Neustart nach Stoerung;Stoerung quittiert;Start-Taster erneut;Motor startet wieder (RUNNING);Befehl 1, Rueckmeldung 1, Zustand RUNNING;PASS;130
+T30;Wiederanlauf;First-out und Prioritaet der Stoerung;Start-Timeout gespeichert;Zusaetzlich Stop-Timeout erzeugen;First-out bleibt START-TIMEOUT (2), Anzeige priorisiert 2;first=2, danach first=2, aktiv=2;PASS;205

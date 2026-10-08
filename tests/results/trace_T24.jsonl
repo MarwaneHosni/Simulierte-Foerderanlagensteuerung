@@ -1,0 +1,5 @@
+{"cycle": 1, "state": 10, "fault": 0, "first": 0, "mode": 0, "cmd": 0, "run": 0, "fb": 0, "entry": 0, "exit": 0, "count": 0, "belt": [-1.0, -1.0, -1.0, -1.0, -1.0]}
+{"cycle": 2, "state": 10, "fault": 0, "first": 0, "mode": 0, "cmd": 0, "run": 0, "fb": 0, "entry": 0, "exit": 0, "count": 0, "belt": [-1.0, -1.0, -1.0, -1.0, -1.0]}
+{"cycle": 3, "state": 50, "fault": 6, "first": 6, "mode": 0, "cmd": 0, "run": 0, "fb": 0, "entry": 0, "exit": 0, "count": 0, "belt": [-1.0, -1.0, -1.0, -1.0, -1.0]}
+{"cycle": 4, "state": 50, "fault": 6, "first": 6, "mode": 0, "cmd": 0, "run": 0, "fb": 0, "entry": 0, "exit": 0, "count": 0, "belt": [-1.0, -1.0, -1.0, -1.0, -1.0]}
+{"cycle": 5, "state": 50, "fault": 6, "first": 6, "mode": 0, "cmd": 0, "run": 0, "fb": 0, "entry": 0, "exit": 0, "count": 0, "belt": [-1.0, -1.0, -1.0, -1.0, -1.0]}

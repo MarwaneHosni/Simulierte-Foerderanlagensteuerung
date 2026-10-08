@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="0.80" title="Simulierte Förderanlage mit Motorsteuerung">
+  <properties>
+    <property name="title" show="1">Simulierte Förderanlage – Motorsteuerung, Schutz- und Fehlerdiagnose</property>
+    <property name="author" show="1">Eigenes technisches Simulationsprojekt</property>
+    <property name="date" show="1">2026</property>
+  </properties>
+  <newdiagrams>
+    <border cols="17" rows="8" displaycols="1" displayrows="1"/>
+    <conductors type="simple" num="1"/>
+  </newdiagrams>
+  <diagram title="01 – Leistungskreis" order="1">
+    <properties>
+      <property name="title" show="1">01 – Leistungskreis</property>
+    </properties>
+    <elements/>
+    <conductors/>
+    <inputs/>
+    <shapes>
+      <dynamic_text x="60" y="60">Leistungskreis: Einspeisung 3~400V -&gt; Q1 -&gt; F1 -&gt; F2 -&gt; K1 -&gt; M1. Siehe electrical/schematics/power_circuit.svg</dynamic_text>
+    </shapes>
+  </diagram>
+  <diagram title="02 – Steuerkreis" order="2">
+    <properties>
+      <property name="title" show="1">02 – Steuerkreis</property>
+    </properties>
+    <elements/>
+    <conductors/>
+    <inputs/>
+    <shapes>
+      <dynamic_text x="60" y="60">Steuerkreis 24V DC -&gt; Not-Halt-Kette -&gt; SPS -&gt; Schütz K1 / Meldeorgane. Siehe electrical/schematics/control_circuit.svg</dynamic_text>
+    </shapes>
+  </diagram>
+  <collection/>
+</project>

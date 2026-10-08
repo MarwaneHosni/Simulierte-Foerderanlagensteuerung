@@ -1,0 +1,37 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- SoftPLC runtime build artifacts ---
+plc/runtime/build/
+plc/runtime/**/*.pyc
+
+# --- Generated screenshots / animation scratch (final PNGs are tracked) ---
+screenshots/_tmp/
+*.gif.tmp
+
+# --- Editors / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# --- Temp ---
+*.tmp
+*.bak
+
+# NOTE: tests/results/*.csv and trace_*.jsonl are intentionally tracked
+#       (they are the genuine recorded test evidence).

@@ -1,0 +1,1013 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+  <fileHeader companyName="Eigenes technisches Simulationsprojekt" productName="Simulierte Foerderanlage" productVersion="1.0" creationDateTime="2026-10-08"/>
+  <content>
+    <types>
+      <dataTypes/>
+    </types>
+    <pous>
+      <pou name="PLC_PRG" pouType="program">
+        <interface/>
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml">(* Quelle: plc/application/PLC_PRG.st *)
+(* ============================================================================
+   PLC_PRG.st
+   Hauptprogramm der SoftPLC (ein Aufruf je Zyklus).
+
+   Ablauf je Zyklus (Reihenfolge ist bewusst festgelegt):
+     1. Initialisierung / Prozessabbild lesen
+     2. Betriebsart
+     3. Prozess (Automatik)
+     4. Motorsteuerung (Steuerlogik)
+     5. Simulation Leistungsteil (Schuetz, Motor)
+     6. Simulation Foerderband (Werkstuecke, Sensoren)
+     7. Diagnose (Stau, Zaehler, Sensorplausibilitaet, Meldespeicher)
+     8. Zustandsmodell und Ausgaenge
+     9. Prozessabbild aktualisieren (Anlage -&gt; SPS-Eingaenge)
+
+   Die Trennung Steuerlogik (Schritte 2-4, 7-8) und elektrisches/mechanisches
+   Modell (Schritte 5-6, 9) bildet das reale Zusammenspiel SPS &lt;-&gt; Anlage ab.
+   ============================================================================ *)
+
+PROGRAM PLC_PRG
+VAR
+    fbMode      : FB_ModeManager;
+    fbProcess   : FB_ConveyorProcess;
+    fbMotor     : FB_MotorControl;
+    fbContactor : FB_ContactorMotor;
+    fbBelt      : FB_BeltSimulation;
+    fbJam       : FB_JamDetection;
+    fbCounter   : FB_Counter;
+    fbAlarm     : FB_Alarm;
+
+    tonDebounce  : TON;
+    xInitDone    : BOOL;
+    xWasRunning  : BOOL;
+    xModePrev    : BOOL;
+    xModeChange  : BOOL;
+    xPermissive  : BOOL;
+    xStartEffective : BOOL;
+    xStopCombined   : BOOL;
+    xSensorInconsistency : BOOL;
+    eState       : E_SystemState;
+    i            : INT;
+END_VAR
+
+    (* ------------------------------------------------------------------ *)
+    (* 1. Initialisierung                                                 *)
+    (* ------------------------------------------------------------------ *)
+    IF NOT xInitDone THEN
+        xStopNC         := TRUE;    (* Stop-Taster nicht betaetigt (NC geschlossen) *)
+        xNotHaltNC      := TRUE;    (* Sicherheitskette geschlossen *)
+        xOverloadNC     := TRUE;    (* Motorschutz in Ordnung *)
+        xMotorFeedback  := FALSE;
+        xEntrySensor    := FALSE;
+        xExitSensor     := FALSE;
+        xInitDone       := TRUE;
+    END_IF;
+
+    (* Prozessabbild -&gt; logische Bedingungen *)
+    xStopOperated    := NOT xStopNC;
+    xEmergencyActive := NOT xNotHaltNC;
+    xOverloadActive  := NOT xOverloadNC;
+
+    (* ------------------------------------------------------------------ *)
+    (* 2. Betriebsart                                                     *)
+    (* ------------------------------------------------------------------ *)
+    fbMode(xAuto := xModeAuto);
+    xModeChange := (xModeAuto &lt;&gt; xModePrev);
+    xModePrev := xModeAuto;
+
+    (* ------------------------------------------------------------------ *)
+    (* 3. Sammelfreigabe (vorheriger Meldespeicherstand)                  *)
+    (* ------------------------------------------------------------------ *)
+    xPermissive := NOT fbAlarm.xAnyFault
+                   AND NOT xEmergencyActive
+                   AND NOT xOverloadActive;
+
+    (* ------------------------------------------------------------------ *)
+    (* 4. Prozess (Automatik)                                             *)
+    (* ------------------------------------------------------------------ *)
+    fbProcess(
+        xEnable      := fbMode.xAutoActive AND xPermissive,
+        xEntrySensor := xEntrySensor,
+        xExitSensor  := xExitSensor);
+
+    (* ------------------------------------------------------------------ *)
+    (* 5. Motorsteuerung (Steuerlogik)                                    *)
+    (* ------------------------------------------------------------------ *)
+    xStartEffective := xStart AND fbMode.xHandActive;
+    xStopCombined   := xStopOperated OR xModeChange;
+
+    fbMotor(
+        xStartManual     := xStartEffective,
+        xAutoStartPulse  := fbProcess.xStartPulse,
+        xAutoStopPulse   := fbProcess.xStopPulse,
+        xStop            := xStopCombined,
+        xEmergencyActive := xEmergencyActive,
+        xOverloadActive  := xOverloadActive,
+        xPermissive      := xPermissive,
+        xMotorFeedback   := xMotorFeedback);
+
+    (* ------------------------------------------------------------------ *)
+    (* 6. Simulation Leistungsteil (Schuetz / Motor)                      *)
+    (* ------------------------------------------------------------------ *)
+    fbContactor(
+        xCoilCmd             := fbMotor.xContactorCmd,
+        xEmergencyActive     := xEmergencyActive,
+        xInjectOverload      := xSimInjectOverload,
+        xInjectFeedbackOpen  := xSimInjectFeedbackOpen,
+        xInjectFeedbackStuck := xSimInjectFeedbackStuck);
+
+    (* ------------------------------------------------------------------ *)
+    (* 7. Simulation Foerderband                                          *)
+    (* ------------------------------------------------------------------ *)
+    fbBelt(
+        xMotorRunning              := fbContactor.xMotorRunning,
+        xGenerate                  := xSimGenerateWorkpieces,
+        xInjectJam                 := xSimInjectJam,
+        xInjectSensorInconsistency := xSimInjectSensorInconsistency);
+
+    (* ------------------------------------------------------------------ *)
+    (* 8. Diagnose                                                        *)
+    (* ------------------------------------------------------------------ *)
+    (* Stau: Antrieb angesteuert (Befehl) oder laeuft *)
+    fbJam(
+        xEntrySensor := xEntrySensor,
+        xExitSensor  := xExitSensor,
+        xConveyorRun := fbMotor.xContactorCmd OR fbContactor.xMotorRunning,
+        xReset       := xReset);
+
+    (* Zaehler *)
+    fbCounter(
+        xExitSensor := xExitSensor,
+        xResetCount := xSimResetCount);
+
+    (* Sensorplausibilitaet: Auslauf aktiv, obwohl kein Transport laeuft *)
+    tonDebounce(IN := xExitSensor AND NOT fbMotor.xRunning AND NOT fbJam.xTransportPending,
+                PT := T_DEBOUNCE);
+    xSensorInconsistency := tonDebounce.Q;
+
+    (* Störmeldespeicher *)
+    fbAlarm(
+        xOverload            := xOverloadActive,
+        xEmergency           := xEmergencyActive,
+        xStartTimeout        := fbMotor.xFaultStartTimeout,
+        xStopTimeout         := fbMotor.xFaultStopTimeout,
+        xJam                 := fbJam.xJam,
+        xSensorInconsistency := xSensorInconsistency,
+        xReset               := xReset);
+
+    (* ------------------------------------------------------------------ *)
+    (* 9. Zustandsmodell                                                  *)
+    (* ------------------------------------------------------------------ *)
+    IF xEmergencyActive THEN
+        eState := E_SystemState.ST_EMERGENCY;
+    ELSIF fbAlarm.xAnyFault THEN
+        eState := E_SystemState.ST_FAULT;
+    ELSIF fbMotor.xRunning THEN
+        eState := E_SystemState.ST_RUNNING;
+        xWasRunning := TRUE;
+    ELSIF xWasRunning THEN
+        eState := E_SystemState.ST_STOPPED;
+    ELSE
+        eState := E_SystemState.ST_READY;
+    END_IF;
+
+    (* ------------------------------------------------------------------ *)
+    (* 10. Ausgaenge                                                      *)
+    (* ------------------------------------------------------------------ *)
+    xMotorContactor := fbMotor.xContactorCmd;
+    xLampGreen      := (eState = E_SystemState.ST_READY)
+                       OR (eState = E_SystemState.ST_RUNNING);
+    xLampRed        := fbAlarm.xLampRed;
+    xBuzzer         := fbAlarm.xBuzzer;
+    xLampYellow     := fbAlarm.xLampYellow;
+
+    (* ------------------------------------------------------------------ *)
+    (* 11. Prozessabbild aktualisieren (Anlage -&gt; SPS)                    *)
+    (* ------------------------------------------------------------------ *)
+    xOverloadNC     := NOT fbContactor.xOverloadTrip;
+    xMotorFeedback  := fbContactor.xMotorFeedback;
+    xEntrySensor    := fbBelt.xEntrySensor;
+    xExitSensor     := fbBelt.xExitSensor;
+
+    (* Simulations-Anzeigewerte *)
+    xSimOverloadTrip := fbContactor.xOverloadTrip;
+    xSimContactor    := fbContactor.xContactorClosed;
+    xSimMotorRunning := fbContactor.xMotorRunning;
+
+    (* ------------------------------------------------------------------ *)
+    (* 12. HMI-Variablen aktualisieren                                    *)
+    (* ------------------------------------------------------------------ *)
+    eHmiState       := eState;
+    eHmiMode        := fbMode.eMode;
+    eHmiProcess     := fbProcess.eState;
+    eHmiActiveFault := fbAlarm.eActive;
+    eHmiFirstFault  := fbAlarm.eFirst;
+    xHmiMotorCmd    := fbMotor.xContactorCmd;
+    xHmiMotorRun    := fbMotor.xRunning;
+    xHmiMotorFb     := xMotorFeedback;
+    xHmiOverload    := xOverloadActive;
+    xHmiEmergency   := xEmergencyActive;
+    xHmiEntry       := xEntrySensor;
+    xHmiExit        := xExitSensor;
+    xHmiJam         := fbJam.xJam;
+    xHmiLampRed     := fbAlarm.xLampRed;
+    xHmiBuzzer      := fbAlarm.xBuzzer;
+    diHmiCount      := fbCounter.diCount;
+    FOR i := 0 TO 4 DO
+        aHmiBeltPos[i] := fbBelt.aPos[i];
+    END_FOR;
+END_PROGRAM
+</xhtml>
+          </ST>
+        </body>
+      </pou>
+      <pou name="FB_ALARM" pouType="functionBlock">
+        <interface/>
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml">(* Quelle: plc/function_blocks/FB_Alarm.st *)
+(* ============================================================================
+   FB_Alarm.st
+   Störmeldespeicher, Priorisierung und First-out-Erkennung.
+
+   - Ueberlast und Not-Halt sind &quot;lebende&quot; Bedingungen (fallen mit dem Signal).
+   - Timeout-/Stau-/Sensorstoerungen werden gespeichert und nur quittiert,
+     wenn die Ursache nicht mehr ansteht.
+   - eFirst haelt die zuerst aufgetretene Stoerung fest.
+   ============================================================================ *)
+
+FUNCTION_BLOCK FB_Alarm
+VAR_INPUT
+    xOverload            : BOOL;
+    xEmergency           : BOOL;
+    xStartTimeout        : BOOL;
+    xStopTimeout         : BOOL;
+    xJam                 : BOOL;
+    xSensorInconsistency : BOOL;
+    xReset               : BOOL;
+END_VAR
+VAR_OUTPUT
+    eActive    : E_FaultCode;
+    eFirst     : E_FaultCode;
+    xAnyFault  : BOOL;
+    xLampRed   : BOOL;
+    xLampYellow: BOOL;
+    xBuzzer    : BOOL;
+    xOverloadLatched  : BOOL;
+    xEmergencyLatched : BOOL;
+    xStartLatched     : BOOL;
+    xStopLatched      : BOOL;
+    xJamLatched       : BOOL;
+    xSensorLatched    : BOOL;
+END_VAR
+
+    (* --- Ereignisstoerungen speichern --- *)
+    IF xOverload THEN
+        xOverloadLatched := TRUE;
+    END_IF;
+    IF xEmergency THEN
+        xEmergencyLatched := TRUE;
+    END_IF;
+    IF xStartTimeout THEN
+        xStartLatched := TRUE;
+    END_IF;
+    IF xStopTimeout THEN
+        xStopLatched := TRUE;
+    END_IF;
+    IF xJam THEN
+        xJamLatched := TRUE;
+    END_IF;
+    IF xSensorInconsistency THEN
+        xSensorLatched := TRUE;
+    END_IF;
+
+    (* --- Sammelstoerung --- *)
+    xAnyFault := xOverloadLatched
+                 OR xEmergencyLatched
+                 OR xStartLatched
+                 OR xStopLatched
+                 OR xJamLatched
+                 OR xSensorLatched;
+
+    (* --- Quittung nur, wenn keine Ursache mehr ansteht --- *)
+    IF xReset
+       AND NOT xOverload
+       AND NOT xEmergency
+       AND NOT xStartTimeout
+       AND NOT xStopTimeout
+       AND NOT xJam
+       AND NOT xSensorInconsistency THEN
+        xOverloadLatched := FALSE;
+        xEmergencyLatched := FALSE;
+        xStartLatched := FALSE;
+        xStopLatched := FALSE;
+        xJamLatched := FALSE;
+        xSensorLatched := FALSE;
+    END_IF;
+
+    (* --- Priorisierte Anzeige der aktiven Stoerung --- *)
+    IF xEmergencyLatched THEN
+        eActive := E_FaultCode.FAULT_EMERGENCY;
+    ELSIF xOverloadLatched THEN
+        eActive := E_FaultCode.FAULT_OVERLOAD;
+    ELSIF xStartLatched THEN
+        eActive := E_FaultCode.FAULT_START_TIMEOUT;
+    ELSIF xStopLatched THEN
+        eActive := E_FaultCode.FAULT_STOP_TIMEOUT;
+    ELSIF xJamLatched THEN
+        eActive := E_FaultCode.FAULT_JAM;
+    ELSIF xSensorLatched THEN
+        eActive := E_FaultCode.FAULT_SENSOR_INCONSISTENCY;
+    ELSE
+        eActive := E_FaultCode.FAULT_NONE;
+    END_IF;
+
+    (* --- First-out --- *)
+    IF (eFirst = E_FaultCode.FAULT_NONE) AND xAnyFault THEN
+        eFirst := eActive;
+    END_IF;
+    IF xReset AND NOT xAnyFault THEN
+        eFirst := E_FaultCode.FAULT_NONE;
+    END_IF;
+
+    (* --- Meldeorgane --- *)
+    xLampRed := xAnyFault;
+    xBuzzer := xAnyFault;
+    xLampYellow := (eActive = E_FaultCode.FAULT_JAM)
+                   OR (eActive = E_FaultCode.FAULT_SENSOR_INCONSISTENCY);
+END_FUNCTION_BLOCK
+</xhtml>
+          </ST>
+        </body>
+      </pou>
+      <pou name="FB_CONVEYORPROCESS" pouType="functionBlock">
+        <interface/>
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml">(* Quelle: plc/function_blocks/FB_ConveyorProcess.st *)
+(* ============================================================================
+   FB_ConveyorProcess.st
+   Prozessablauf Automatikbetrieb.
+
+   Zwei Varianten, gesteuert durch die Konstante AUTO_CONTINUOUS:
+     - Bedarfsbetrieb (FALSE): Start bei Werkstueck am Einlauf, Nachlauf nach
+       dem Auslauf, dann Rueckkehr nach IDLE.
+     - Dauerlauf (TRUE): Start beim Aktivieren der Automatik, kein Stopp.
+
+   Ausgaenge sind Impulse (ein Zyklus) fuer die Motorsteuerung.
+   ============================================================================ *)
+
+FUNCTION_BLOCK FB_ConveyorProcess
+VAR_INPUT
+    xEnable      : BOOL;   (* Automatik aktiv, READY, keine Stoerung *)
+    xEntrySensor : BOOL;   (* B1 *)
+    xExitSensor  : BOOL;   (* B2 *)
+END_VAR
+VAR_OUTPUT
+    xStartPulse : BOOL;    (* Startimpuls an Motorsteuerung *)
+    xStopPulse  : BOOL;    (* Stopimpuls an Motorsteuerung *)
+    eState      : E_ProcessState;
+END_VAR
+VAR
+    xEnablePrev : BOOL;
+    tonRunOn    : TON;
+    xRunOnCond  : BOOL;
+END_VAR
+
+    xStartPulse := FALSE;
+    xStopPulse  := FALSE;
+
+    (* Nachlauf-Timer jede Scan aufrufen; ausserhalb P_RUN_ON zuruecksetzen *)
+    xRunOnCond := (eState = E_ProcessState.P_RUN_ON) AND NOT xExitSensor;
+    tonRunOn(IN := xRunOnCond, PT := T_RUN_ON);
+
+    IF NOT xEnable THEN
+        IF xEnablePrev THEN
+            xStopPulse := TRUE;   (* Automatik verlassen -&gt; Band stoppen *)
+        END_IF;
+        eState := E_ProcessState.P_IDLE;
+        xEnablePrev := FALSE;
+    ELSE
+        CASE eState OF
+            E_ProcessState.P_IDLE :
+                IF AUTO_CONTINUOUS THEN
+                    IF NOT xEnablePrev THEN
+                        xStartPulse := TRUE;
+                    END_IF;
+                    eState := E_ProcessState.P_TRANSPORT;
+                ELSE
+                    IF xEntrySensor THEN
+                        xStartPulse := TRUE;
+                        eState := E_ProcessState.P_TRANSPORT;
+                    END_IF;
+                END_IF;
+
+            E_ProcessState.P_TRANSPORT :
+                IF (NOT AUTO_CONTINUOUS) AND xExitSensor THEN
+                    eState := E_ProcessState.P_RUN_ON;
+                END_IF;
+
+            E_ProcessState.P_RUN_ON :
+                IF tonRunOn.Q THEN
+                    xStopPulse := TRUE;
+                    eState := E_ProcessState.P_IDLE;
+                END_IF;
+
+            ELSE
+                eState := E_ProcessState.P_IDLE;
+        END_CASE;
+        xEnablePrev := TRUE;
+    END_IF;
+END_FUNCTION_BLOCK
+</xhtml>
+          </ST>
+        </body>
+      </pou>
+      <pou name="FB_COUNTER" pouType="functionBlock">
+        <interface/>
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml">(* Quelle: plc/function_blocks/FB_Counter.st *)
+(* ============================================================================
+   FB_Counter.st
+   Werkstueckzaehlung.
+
+   Gezaehlt wird am Auslauf ueber die steigende Flanke des Sensors B2.
+   Begruendung: Der Auslauf repraesentiert ein fertig transportiertes Werkstueck.
+   Die Flankenauswertung (R_TRIG) verhindert Mehrfachzaehlung, solange der
+   Sensor aktiv bleibt.
+   ============================================================================ *)
+
+FUNCTION_BLOCK FB_Counter
+VAR_INPUT
+    xExitSensor : BOOL;    (* B2 *)
+    xResetCount : BOOL;
+END_VAR
+VAR_OUTPUT
+    diCount      : DINT;
+    xJustCounted : BOOL;   (* Impuls fuer HMI/Statistik *)
+END_VAR
+VAR
+    rtrigExit : R_TRIG;
+END_VAR
+
+    rtrigExit(CLK := xExitSensor);
+    xJustCounted := FALSE;
+
+    IF rtrigExit.Q THEN
+        diCount := diCount + 1;
+        xJustCounted := TRUE;
+    END_IF;
+
+    IF xResetCount THEN
+        diCount := 0;
+    END_IF;
+END_FUNCTION_BLOCK
+</xhtml>
+          </ST>
+        </body>
+      </pou>
+      <pou name="FB_JAMDETECTION" pouType="functionBlock">
+        <interface/>
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml">(* Quelle: plc/function_blocks/FB_JamDetection.st *)
+(* ============================================================================
+   FB_JamDetection.st
+   Stau-/Blockadeerkennung.
+
+   Verfahren: Ein Werkstueck wird am Einlauf erkannt und der Antrieb laeuft.
+   Erreicht es den Auslauf nicht innerhalb T_MAX_TRANSPORT, liegt ein Stau vor.
+   Die Stau-Stoerung wird bis zur Quittung gespeichert.
+   ============================================================================ *)
+
+FUNCTION_BLOCK FB_JamDetection
+VAR_INPUT
+    xEntrySensor      : BOOL;   (* B1 *)
+    xExitSensor       : BOOL;   (* B2 *)
+    xConveyorRun      : BOOL;   (* Antrieb angesteuert bzw. laeuft *)
+    xReset            : BOOL;
+END_VAR
+VAR_OUTPUT
+    xJam              : BOOL;
+    xTransportPending : BOOL;   (* Werkstueck unterwegs, Auslauf erwartet *)
+END_VAR
+VAR
+    rtrigEntry : R_TRIG;
+    tonJam     : TON;
+END_VAR
+
+    rtrigEntry(CLK := xEntrySensor);
+
+    (* Transportauftrag setzen, sobald ein Werkstueck einlaeuft und der Antrieb laeuft *)
+    IF rtrigEntry.Q AND xConveyorRun THEN
+        xTransportPending := TRUE;
+    END_IF;
+
+    (* Auslauf erreicht -&gt; Transportauftrag beendet *)
+    IF xExitSensor THEN
+        xTransportPending := FALSE;
+    END_IF;
+
+    (* Ueberwachung der Transportzeit *)
+    tonJam(IN := xTransportPending, PT := T_MAX_TRANSPORT);
+    IF tonJam.Q THEN
+        xJam := TRUE;
+    END_IF;
+
+    (* Quittung nur bei freiem Einlauf *)
+    IF xReset AND NOT xEntrySensor THEN
+        xJam := FALSE;
+        xTransportPending := FALSE;
+        tonJam(IN := FALSE, PT := T_MAX_TRANSPORT);
+    END_IF;
+END_FUNCTION_BLOCK
+</xhtml>
+          </ST>
+        </body>
+      </pou>
+      <pou name="FB_MODEMANAGER" pouType="functionBlock">
+        <interface/>
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml">(* Quelle: plc/function_blocks/FB_ModeManager.st *)
+(* ============================================================================
+   FB_ModeManager.st
+   Verwaltung der Betriebsart (Hand / Automatik).
+
+   Der Wahlschalter ist ein reines Bedienelement; er hat keine Sicherheitsfunktion.
+   ============================================================================ *)
+
+FUNCTION_BLOCK FB_ModeManager
+VAR_INPUT
+    xAuto : BOOL;   (* S5: 1 = Automatik, 0 = Hand *)
+END_VAR
+VAR_OUTPUT
+    eMode       : E_Betriebsart;
+    xAutoActive : BOOL;
+    xHandActive : BOOL;
+END_VAR
+
+    IF xAuto THEN
+        eMode := E_Betriebsart.BETRIEB_AUTO;
+    ELSE
+        eMode := E_Betriebsart.BETRIEB_HAND;
+    END_IF;
+
+    xAutoActive := (eMode = E_Betriebsart.BETRIEB_AUTO);
+    xHandActive := NOT xAutoActive;
+END_FUNCTION_BLOCK
+</xhtml>
+          </ST>
+        </body>
+      </pou>
+      <pou name="FB_MOTORCONTROL" pouType="functionBlock">
+        <interface/>
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml">(* Quelle: plc/function_blocks/FB_MotorControl.st *)
+(* ============================================================================
+   FB_MotorControl.st
+   Kern der Motorsteuerung (Steuerlogik).
+
+   Konzept:
+     - Start ist flankengesteuert (Taster bzw. Automatik-Startimpuls).
+     - Selbsthaltung (Latch) des Laufwunsches.
+     - Kickout-Bedingungen (Stop, Not-Halt, Ueberlast, fehlende Freigabe,
+       Automatik-Stopimpuls) setzen die Selbsthaltung zurueck.
+     - Stop hat Vorrang vor Start.
+     - Der Schuetzbefehl ist zusaetzlich hart verriegelt.
+     - Ueberwachung: &quot;laeuft nicht an&quot; und &quot;stoppt nicht&quot; ueber TON.
+   ============================================================================ *)
+
+FUNCTION_BLOCK FB_MotorControl
+VAR_INPUT
+    xStartManual     : BOOL;   (* S1 Start-Taster (Hand) *)
+    xAutoStartPulse  : BOOL;   (* Startimpuls aus dem Automatikprozess *)
+    xAutoStopPulse   : BOOL;   (* Stopimpuls (Nachlauf beendet) *)
+    xStop            : BOOL;   (* TRUE = Stop betaetigt bzw. Betriebsartwechsel *)
+    xEmergencyActive : BOOL;   (* Not-Halt aktiv *)
+    xOverloadActive  : BOOL;   (* Ueberlast aktiv *)
+    xPermissive      : BOOL;   (* Sammelfreigabe (keine Stoerung) *)
+    xMotorFeedback   : BOOL;   (* tatsaechlicher Motorlauf *)
+END_VAR
+VAR_OUTPUT
+    xContactorCmd      : BOOL; (* Befehl an Schuetz K1 *)
+    xRunRequest        : BOOL; (* interne Selbsthaltung *)
+    xRunning           : BOOL; (* Motor laeuft (Rueckmeldung) *)
+    xFaultStartTimeout : BOOL; (* &quot;laeuft nicht an&quot; *)
+    xFaultStopTimeout  : BOOL; (* &quot;stoppt nicht&quot; *)
+END_VAR
+VAR
+    rtrigStart  : R_TRIG;
+    tonStart    : TON;
+    tonStop     : TON;
+    xStartAction : BOOL;
+    xKickout     : BOOL;
+END_VAR
+
+    (* --- Startflanke aus dem Handbetrieb --- *)
+    rtrigStart(CLK := xStartManual);
+
+    (* --- Start-/Kickout-Bedingungen --- *)
+    xStartAction := (rtrigStart.Q OR xAutoStartPulse)
+                    AND xPermissive
+                    AND NOT xStop
+                    AND NOT xEmergencyActive
+                    AND NOT xOverloadActive;
+
+    xKickout := xStop
+                OR xAutoStopPulse
+                OR xEmergencyActive
+                OR xOverloadActive
+                OR NOT xPermissive;
+
+    (* --- Selbsthaltung des Laufwunsches; Kickout hat Vorrang --- *)
+    IF xKickout THEN
+        xRunRequest := FALSE;
+    ELSIF xStartAction THEN
+        xRunRequest := TRUE;
+    END_IF;
+
+    (* --- Schuetzbefehl, zusaetzlich hart verriegelt --- *)
+    xContactorCmd := xRunRequest
+                     AND NOT xStop
+                     AND NOT xEmergencyActive
+                     AND NOT xOverloadActive
+                     AND xPermissive;
+
+    (* --- Rueckmeldung des tatsaechlichen Motorlaufs --- *)
+    xRunning := xMotorFeedback;
+
+    (* --- Startueberwachung: Befehl EIN, keine Rueckmeldung --- *)
+    tonStart(IN := xContactorCmd AND NOT xMotorFeedback,
+             PT := T_MOTOR_START_TIMEOUT);
+    xFaultStartTimeout := tonStart.Q;
+
+    (* --- Stopueberwachung: Befehl AUS, Rueckmeldung bleibt EIN --- *)
+    tonStop(IN := (NOT xContactorCmd) AND xMotorFeedback,
+            PT := T_MOTOR_STOP_TIMEOUT);
+    xFaultStopTimeout := tonStop.Q;
+END_FUNCTION_BLOCK
+</xhtml>
+          </ST>
+        </body>
+      </pou>
+      <pou name="FB_BELTSIMULATION" pouType="functionBlock">
+        <interface/>
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml">(* Quelle: plc/simulation/FB_BeltSimulation.st *)
+(* ============================================================================
+   FB_BeltSimulation.st
+   Mechanisches Modell des Foerderbands.
+
+   - Das Band hat eine normierte Laenge von 0..100 %.
+   - Werkstuecke werden in 5 Plaetzen gefuehrt (aPos; -1 = frei).
+   - Bei laufendem Motor bewegen sich die Werkstuecke mit BELT_SPEED_PER_S.
+   - Beim Durchlaufen der Zonen werden die Sensoren B1 (Einlauf) und B2 (Auslauf)
+     gesetzt.
+   - xInjectJam blockiert den Transport (Stau).
+   - xInjectSensorInconsistency erzwingt ein dauerhaftes Auslaufsignal.
+   ============================================================================ *)
+
+FUNCTION_BLOCK FB_BeltSimulation
+VAR_INPUT
+    xMotorRunning              : BOOL;
+    xGenerate                  : BOOL;   (* Werkstuecke automatisch erzeugen *)
+    xInjectJam                 : BOOL;
+    xInjectSensorInconsistency : BOOL;
+END_VAR
+VAR_OUTPUT
+    xEntrySensor : BOOL;                 (* B1 *)
+    xExitSensor  : BOOL;                 (* B2 *)
+    aPos         : ARRAY[0..4] OF REAL;  (* Werkstueckpositionen in % *)
+END_VAR
+VAR
+    i          : INT;
+    xInitDone  : BOOL;
+    xPlaced    : BOOL;
+    rStep      : REAL;
+    tonGen     : TON;
+END_VAR
+
+    (* --- Einmalige Initialisierung --- *)
+    IF NOT xInitDone THEN
+        FOR i := 0 TO 4 DO
+            aPos[i] := -1.0;
+        END_FOR;
+        xInitDone := TRUE;
+    END_IF;
+
+    (* --- Werkstuecke periodisch erzeugen (nur wenn gewuenscht) --- *)
+    tonGen(IN := NOT tonGen.Q, PT := WORKPIECE_INTERVAL);
+    IF xGenerate AND tonGen.Q THEN
+        xPlaced := FALSE;
+        FOR i := 0 TO 4 DO
+            IF (NOT xPlaced) AND (aPos[i] &lt; 0.0) THEN
+                aPos[i] := 0.0;
+                xPlaced := TRUE;
+            END_IF;
+        END_FOR;
+    END_IF;
+
+    (* --- Transport --- *)
+    rStep := BELT_SPEED_PER_S * CYCLE_TIME_S;
+    FOR i := 0 TO 4 DO
+        IF aPos[i] &gt;= 0.0 THEN
+            IF xMotorRunning THEN
+                IF NOT xInjectJam THEN
+                    aPos[i] := aPos[i] + rStep;
+                ELSE
+                    (* Blockade in Bandmitte: Werkstueck laeuft bis 50 % und bleibt stehen *)
+                    IF aPos[i] &lt; 50.0 THEN
+                        aPos[i] := aPos[i] + rStep;
+                        IF aPos[i] &gt; 50.0 THEN
+                            aPos[i] := 50.0;
+                        END_IF;
+                    END_IF;
+                END_IF;
+            END_IF;
+            IF aPos[i] &gt; 100.0 THEN
+                aPos[i] := -1.0;   (* Werkstueck hat das Band verlassen *)
+            END_IF;
+        END_IF;
+    END_FOR;
+
+    (* --- Sensorauswertung (Zonen) ---------------------------------------
+       Einlaufzone 0..6 %: ein von der Zufuehrung aufgesetztes Werkstueck
+       loest B1 unmittelbar aus.
+       Auslaufzone 94..100 %: B2 wird bis zum Bandende gehalten.        *)
+    xEntrySensor := FALSE;
+    xExitSensor := FALSE;
+    FOR i := 0 TO 4 DO
+        IF (aPos[i] &gt;= 0.0) AND (aPos[i] &lt;= 6.0) THEN
+            xEntrySensor := TRUE;
+        END_IF;
+        IF (aPos[i] &gt;= 94.0) AND (aPos[i] &lt;= 100.0) THEN
+            xExitSensor := TRUE;
+        END_IF;
+    END_FOR;
+
+    (* --- Fehlerinjektion: dauerhaftes Auslaufsignal --- *)
+    IF xInjectSensorInconsistency THEN
+        xExitSensor := TRUE;
+    END_IF;
+END_FUNCTION_BLOCK
+</xhtml>
+          </ST>
+        </body>
+      </pou>
+      <pou name="FB_CONTACTORMOTOR" pouType="functionBlock">
+        <interface/>
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml">(* Quelle: plc/simulation/FB_ContactorMotor.st *)
+(* ============================================================================
+   FB_ContactorMotor.st
+   Simulationsmodell des elektrischen Leistungsteils:
+
+       Schütz K1  -&gt;  Drehstrommotor M1
+       Motorschutzrelais F2 (Überlast)
+       Rückmeldung (Hilfskontakt)
+
+   WICHTIG (Konzept Leistungskreis vs. Steuerkreis):
+   Das Schütz zieht nur an, wenn die SPS-Ansteuerung EIN ist UND keine harte
+   Schutzbedingung (Überlast, Not-Halt) ansteht. Damit wirkt der Schutz
+   unabhängig von der Software - genau wie in einer realen Schützung.
+   ============================================================================ *)
+
+FUNCTION_BLOCK FB_ContactorMotor
+VAR_INPUT
+    xCoilCmd             : BOOL;   (* Ansteuerung von der SPS (K1-Spule) *)
+    xEmergencyActive     : BOOL;   (* Not-Halt-Kette offen -&gt; harte Abschaltung *)
+    xInjectOverload      : BOOL;   (* Fehlerinjektion Überlast *)
+    xInjectFeedbackOpen  : BOOL;   (* Fehlerinjektion: Rückmeldung faellt aus *)
+    xInjectFeedbackStuck : BOOL;   (* Fehlerinjektion: Rückmeldung haengt *)
+END_VAR
+VAR_OUTPUT
+    xContactorClosed : BOOL;   (* Schütz angezogen (Hauptkontakt) *)
+    xMotorRunning    : BOOL;   (* Motor laeuft (mechanisch) *)
+    xMotorFeedback   : BOOL;   (* Rueckmeldung an die SPS *)
+    xOverloadTrip    : BOOL;   (* Motorschutz F2 ausgeloest *)
+END_VAR
+VAR
+    tonPull     : TON;
+    tonOverload : TON;
+    xEnergize   : BOOL;
+END_VAR
+
+    (* --- Motorschutzrelais F2: Auslösung bei anhaltender Überlast --- *)
+    tonOverload(IN := xInjectOverload AND xMotorRunning, PT := T_OVERLOAD_TRIP);
+    IF tonOverload.Q THEN
+        xOverloadTrip := TRUE;
+    END_IF;
+    (* Manuelle Rückstellung des Schutzrelais (Injektion entfernt) *)
+    IF NOT xInjectOverload THEN
+        xOverloadTrip := FALSE;
+        tonOverload(IN := FALSE, PT := T_OVERLOAD_TRIP);
+    END_IF;
+
+    (* --- Schützspule: harte Verriegelung durch Motorschutz und Not-Halt --- *)
+    xEnergize := xCoilCmd AND NOT xOverloadTrip AND NOT xEmergencyActive;
+    tonPull(IN := xEnergize, PT := T_CONTACTOR_PULL);
+    xContactorClosed := tonPull.Q;
+
+    (* --- Motor und Rückmeldung --- *)
+    xMotorRunning := xContactorClosed;
+    xMotorFeedback := xContactorClosed;
+
+    (* --- Fehlerinjektion Rückmeldung --- *)
+    IF xInjectFeedbackOpen THEN
+        xMotorFeedback := FALSE;
+    END_IF;
+    IF xInjectFeedbackStuck THEN
+        xMotorFeedback := TRUE;
+    END_IF;
+END_FUNCTION_BLOCK
+</xhtml>
+          </ST>
+        </body>
+      </pou>
+    </pous>
+  </content>
+  <addData>
+    <data name="globals_and_types:standard/GVL_IO.st">(* ============================================================================
+   GVL_IO.st
+   Globaler Ein-/Ausgangs-Prozessabbild der SoftPLC.
+
+   Referenz: ../../electrical/io_list/io_list.md
+   Konvention: Signalpegel wie am SPS-Klemmen-Eingang.
+     - NO (Schliesser): 0 = nicht betaetigt, 1 = betaetigt
+     - NC (Oeffner, fail-safe): 1 = Kette geschlossen / gesund, 0 = betaetigt/Stoerung
+   ============================================================================ *)
+
+VAR_GLOBAL
+    (* ----- Eingaenge (%I) ----- *)
+    xStart          AT %IX0.0 : BOOL;  (* S1 Start-Taster (NO): 1 = Start angefordert *)
+    xStopNC         AT %IX0.1 : BOOL;  (* S2 Stop-Taster (NC): 1 = Kette geschlossen *)
+    xNotHaltNC      AT %IX0.2 : BOOL;  (* S3 Not-Halt (NC): 1 = Sicherheitskette geschlossen *)
+    xOverloadNC     AT %IX0.3 : BOOL;  (* F2 Motorschutz (NC): 1 = Motorschutz OK *)
+    xEntrySensor    AT %IX0.4 : BOOL;  (* B1 Lichtschranke Einlauf: 1 = Werkstueck erfasst *)
+    xExitSensor     AT %IX0.5 : BOOL;  (* B2 Lichtschranke Auslauf: 1 = Werkstueck erfasst *)
+    xMotorFeedback  AT %IX0.6 : BOOL;  (* K1/M1 Rueckmeldung: 1 = Motor laeuft *)
+    xModeAuto       AT %IX0.7 : BOOL;  (* S5 Wahlschalter: 1 = Automatik, 0 = Hand *)
+    xReset          AT %IX1.0 : BOOL;  (* S4 Reset-Taster (NO) *)
+    xBeltSpeedPulse AT %IX1.1 : BOOL;  (* Reserve: Bandgeschwindigkeit/Impuls (optional) *)
+
+    (* ----- Ausgaenge (%Q) ----- *)
+    xMotorContactor AT %QX0.0 : BOOL;  (* K1 Schuetzansteuerung *)
+    xLampGreen      AT %QX0.1 : BOOL;  (* H1 Betrieb/READY *)
+    xLampRed        AT %QX0.2 : BOOL;  (* H2 Stoerung *)
+    xBuzzer         AT %QX0.3 : BOOL;  (* H3 Hupe *)
+    xLampYellow     AT %QX0.4 : BOOL;  (* H4 Warnung (optional) *)
+END_VAR
+
+(* Abgeleitete, logische Bedingungen (aus den Rohsignalen).
+   Diese GVL wird durch die Anwendung einmal je Zyklus aktualisiert. *)
+VAR_GLOBAL
+    xStopOperated    : BOOL;  (* Stop betaetigt  = NOT xStopNC *)
+    xEmergencyActive : BOOL;  (* Not-Halt aktiv  = NOT xNotHaltNC *)
+    xOverloadActive  : BOOL;  (* Ueberlast aktiv = NOT xOverloadNC *)
+END_VAR
+</data>
+    <data name="globals_and_types:standard/Types.st">(* ============================================================================
+   Types.st
+   Benutzerdefinierte Datentypen (Enumerationen, Strukturen).
+
+   Hinweis: In der SoftPLC-Runtime und in CODESYS koennen Enum-Werte qualifiziert
+   (z. B. E_SystemState.ST_READY) verwendet werden.
+   ============================================================================ *)
+
+TYPE
+    (* Betriebsart des Bedieners *)
+    E_Betriebsart : (
+        BETRIEB_HAND := 0,
+        BETRIEB_AUTO := 1
+    );
+
+    (* Zustandsmodell der Anlage *)
+    E_SystemState : (
+        ST_INIT := 0,
+        ST_READY := 10,
+        ST_RUNNING := 20,
+        ST_STOPPED := 30,
+        ST_FAULT := 40,
+        ST_EMERGENCY := 50
+    );
+
+    (* Stoerungs-Codes *)
+    E_FaultCode : (
+        FAULT_NONE := 0,
+        FAULT_OVERLOAD := 1,
+        FAULT_START_TIMEOUT := 2,
+        FAULT_STOP_TIMEOUT := 3,
+        FAULT_JAM := 4,
+        FAULT_SENSOR_INCONSISTENCY := 5,
+        FAULT_EMERGENCY := 6
+    );
+
+    (* Prozesszustand Automatik *)
+    E_ProcessState : (
+        P_IDLE := 0,
+        P_TRANSPORT := 1,
+        P_RUN_ON := 2
+    );
+END_TYPE
+</data>
+    <data name="globals_and_types:application/Config.st">(* ============================================================================
+   Config.st
+   Zentrale Konfigurations- und Zeitkonstanten der Simulation.
+
+   Alle Zeiten sind Simulationsannahmen (didaktisch), keine realen
+   Anlagenparameter. Siehe docs/10_Grenzen_und_Annahmen.md.
+   ============================================================================ *)
+
+VAR_GLOBAL CONSTANT
+    (* Zykluszeit der SoftPLC-Simulation *)
+    T_ZYKLUS               : TIME := T#20ms;
+    CYCLE_TIME_S           : REAL := 0.02;       (* Zykluszeit in Sekunden (Rechenwert) *)
+
+    (* Motorueberwachung *)
+    T_MOTOR_START_TIMEOUT  : TIME := T#2000ms;   (* Befehl EIN, Rueckmeldung AUS *)
+    T_MOTOR_STOP_TIMEOUT   : TIME := T#2000ms;   (* Befehl AUS, Rueckmeldung EIN *)
+
+    (* Transport-/Stauueberwachung Einlauf -&gt; Auslauf *)
+    T_MAX_TRANSPORT        : TIME := T#8000ms;
+    T_RUN_ON               : TIME := T#1500ms;   (* Nachlauf nach Auslauf *)
+
+    (* Schaltgeraete / Motorschutz (Simulationsmodell) *)
+    T_CONTACTOR_PULL       : TIME := T#300ms;    (* Anzugsverzoegerung Schuetz *)
+    T_OVERLOAD_TRIP        : TIME := T#3000ms;   (* Ausloesezeit Motorschutz *)
+
+    (* Entprellung / Plausibilitaet *)
+    T_DEBOUNCE             : TIME := T#500ms;
+
+    (* Prozess *)
+    AUTO_CONTINUOUS        : BOOL := FALSE;      (* FALSE = Bedarfsbetrieb, TRUE = Dauerlauf *)
+    BELT_SPEED_PER_S       : REAL := 25.0;       (* Bandweg in % je Sekunde *)
+    WORKPIECE_INTERVAL     : TIME := T#4000ms;   (* Werkstueck-Erzeugung (Automatik) *)
+END_VAR
+</data>
+    <data name="globals_and_types:simulation/GVL_Simulation.st">(* ============================================================================
+   GVL_Simulation.st
+   Globale Variablen der Anlagensimulation (elektrisches/mechanisches Modell).
+
+   ACHTUNG: Diese Variablen existieren NUR in der Simulation. Sie bilden das
+   Verhalten von Schuetz, Motor, Motorschutz und Foerderband nach und erlauben
+   eine gezielte Fehlerinjektion fuer Tests und Diagnose.
+   ============================================================================ *)
+
+VAR_GLOBAL
+    (* --- Fehlerinjektion (nur Simulation) --- *)
+    xSimInjectOverload            : BOOL;  (* Motorschutz nach T_OVERLOAD_TRIP ausloesen *)
+    xSimInjectFeedbackOpen        : BOOL;  (* Rueckmeldung faellt aus (laeuft nicht an) *)
+    xSimInjectFeedbackStuck       : BOOL;  (* Rueckmeldung haengt (stoppt nicht) *)
+    xSimInjectJam                 : BOOL;  (* Band blockiert (Stau) *)
+    xSimInjectSensorInconsistency : BOOL;  (* Auslaufsensor liefert Dauersignal *)
+    xSimGenerateWorkpieces        : BOOL;  (* Werkstuecke automatisch erzeugen *)
+    xSimResetCount                : BOOL;  (* Werkstueckzaehler ruecksetzen *)
+
+    (* --- Simulations-Anzeigewerte --- *)
+    xSimOverloadTrip  : BOOL;  (* Motorschutz F2 ausgeloest *)
+    xSimContactor     : BOOL;  (* Schuetz K1 angezogen *)
+    xSimMotorRunning  : BOOL;  (* Motor laeuft (mechanisch) *)
+END_VAR
+</data>
+    <data name="globals_and_types:visualization/GVL_HMI.st">(* ============================================================================
+   GVL_HMI.st
+   Globale Anzeigevariablen fuer das HMI / die Prozessvisualisierung.
+
+   Diese Variablen werden einmal je Zyklus aus den realen Simulations- und
+   Steuervariablen aktualisiert. Das HMI liest ausschliesslich diese Werte,
+   damit die Anzeige immer den tatsaechlichen Zustand widerspiegelt.
+   ============================================================================ *)
+
+VAR_GLOBAL
+    eHmiState        : E_SystemState;
+    eHmiMode         : E_Betriebsart;
+    eHmiProcess      : E_ProcessState;
+    eHmiActiveFault  : E_FaultCode;
+    eHmiFirstFault   : E_FaultCode;
+
+    xHmiMotorCmd     : BOOL;
+    xHmiMotorRun     : BOOL;
+    xHmiMotorFb      : BOOL;
+    xHmiOverload     : BOOL;
+    xHmiEmergency    : BOOL;
+    xHmiEntry        : BOOL;
+    xHmiExit         : BOOL;
+    xHmiJam          : BOOL;
+    xHmiLampRed      : BOOL;
+    xHmiBuzzer       : BOOL;
+
+    diHmiCount       : DINT;
+    aHmiBeltPos      : ARRAY[0..4] OF REAL;
+END_VAR
+</data>
+  </addData>
+</project>

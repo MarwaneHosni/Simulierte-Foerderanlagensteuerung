@@ -1,0 +1,16 @@
+Adresse;Signal;Typ;Bezeichner;Geraet;Polaritaet;Ruhezustand;Beschreibung
+%IX0.0;Start;DI;S1;Taster Schliesser;NO;0;Start des Motors anfordern
+%IX0.1;Stop;DI;S2;Taster Oeffner;NC;1;Stop hat Vorrang vor Start
+%IX0.2;Not-Halt;DI;S3;Not-Halt-Taster Oeffner;NC;1;Sicherheitskette geschlossen
+%IX0.3;Ueberlast;DI;F2;Motorschutzrelais Oeffner;NC;1;Motorschutz in Ordnung
+%IX0.4;Sensor Einlauf;DI;B1;Lichtschranke Einlauf;-;0;Werkstueck am Einlauf
+%IX0.5;Sensor Auslauf;DI;B2;Lichtschranke Auslauf;-;0;Werkstueck am Auslauf
+%IX0.6;Motor-Rueckmeldung;DI;K1/M1;Hilfskontakt/Stromrelais;-;0;Motor laeuft
+%IX0.7;Betriebsart Auto;DI;S5;Wahlschalter Hand/Auto;-;0;1=Auto 0=Hand
+%IX1.0;Reset;DI;S4;Taster Schliesser;NO;0;Stoerung quittieren
+%IX1.1;Reserve;DI;-;-;-;0;optional
+%QX0.0;Schuetzansteuerung;DO;K1;Schuetz Spule;-;-;Motor einschalten
+%QX0.1;Meldeleuchte gruen;DO;H1;Leuchte;-;-;Betrieb READY
+%QX0.2;Meldeleuchte rot;DO;H2;Leuchte;-;-;Stoerung
+%QX0.3;Hupe;DO;H3;Signalgeber;-;-;Stoermeldung
+%QX0.4;Meldeleuchte gelb;DO;H4;Leuchte;-;-;Warnung optional

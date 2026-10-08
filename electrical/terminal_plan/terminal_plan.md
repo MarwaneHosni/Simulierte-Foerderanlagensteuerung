@@ -1,0 +1,42 @@
+# Klemmenplan
+
+**Projekt:** Simulierte Förderanlage mit Motorsteuerung, Schutz- und Fehlerdiagnose
+
+**Art:** PC-basierte Simulation und elektrotechnische Konzeptplanung
+
+
+Die Klemmenzuordnung entspricht dem Stromlaufplan (`../schematics/`) und der I/O-Liste (`../io_list/io_list.md`). Richtungen: `DI` Eingang, `DO` Ausgang, `PWR` Versorgung/Leistung.
+
+| Klemme | Signal | Richtung | Beschreibung |
+| ------ | ------ | -------- | ------------ |
+| X1.1 | +24V | PWR | Steuerspannung +24 V DC |
+| X1.2 | 0V | PWR | Steuerspannung 0 V (Bezug) |
+| X1.3 | PE | PWR | Schutzleiter Steuerung |
+| X2.1 | Start | DI | S1 Start-Taster (Schließer) |
+| X2.2 | Stop | DI | S2 Stop-Taster (Öffner) |
+| X2.3 | Not-Halt | DI | S3 Not-Halt-Taster (Öffner) |
+| X2.4 | Reset | DI | S4 Reset-Taster (Schließer) |
+| X2.5 | Betriebsart Auto | DI | S5 Wahlschalter Hand/Auto |
+| X2.6 | +24V Bedienung | PWR | gemeinsame Versorgung Bedienfeld |
+| X3.1 | Sensor Einlauf B1 | DI | Lichtschranke Einlauf |
+| X3.2 | Sensor Auslauf B2 | DI | Lichtschranke Auslauf |
+| X3.3 | Rückmeldung K1 | DI | Hilfskontakt Schütz / Motorlauf |
+| X3.4 | Motorschutz F2 | DI | Öffner-Hilfskontakt Motorschutzrelais |
+| X3.5 | +24V Sensorik | PWR | Versorgung Sensorik |
+| X3.6 | 0V Sensorik | PWR | Bezug Sensorik |
+| X4.1 | Schütz K1 | DO | Ansteuerung Schützspule K1 |
+| X4.2 | Meldeleuchte H1 | DO | Betrieb/READY grün |
+| X4.3 | Meldeleuchte H2 | DO | Störung rot |
+| X4.4 | Hupe H3 | DO | Störsignal |
+| X4.5 | Meldeleuchte H4 | DO | Warnung gelb (optional) |
+| X4.6 | 0V Aktorik | PWR | Bezug Aktorik |
+| X5.1 | M1 U | PWR | Motorwicklung U |
+| X5.2 | M1 V | PWR | Motorwicklung V |
+| X5.3 | M1 W | PWR | Motorwicklung W |
+| X5.4 | M1 PE | PWR | Schutzleiter Motor |
+| X6.1 | L1 | PWR | Einspeisung Außenleiter L1 |
+| X6.2 | L2 | PWR | Einspeisung Außenleiter L2 |
+| X6.3 | L3 | PWR | Einspeisung Außenleiter L3 |
+| X6.4 | PE | PWR | Einspeisung Schutzleiter |
+| X6.5 | N | PWR | Einspeisung Neutralleiter |
+
